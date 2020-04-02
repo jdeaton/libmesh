@@ -49,46 +49,54 @@ AC_DEFUN([CONFIGURE_PETSC],
 
     # If the user doesn't have any PETSC directory specified, let's check to
     # see if it's installed via Ubuntu module
-    if (test "x$PETSC_DIR" = x); then
-      AC_PATH_PROG(PETSCARCH, petscarch)
-      if (test "x$PETSCARCH" != x); then
-        export PETSC_DIR=/usr/lib/petsc
-        export PETSC_ARCH=`$PETSCARCH`
-        if (test -d $PETSC_DIR); then
-          AC_MSG_RESULT([using system-provided PETSC_DIR $PETSC_DIR])
-          AC_MSG_RESULT([using system-provided PETSC_ARCH $PETSC_ARCH])
-        fi
-      fi
-    fi
+    AS_IF([test "x${PETSC_DIR}" = x],
+          [
+            AC_PATH_PROG(PETSCARCH, petscarch)
+            AS_IF([test "x$PETSCARCH" != x],
+                  [
+                    export PETSC_DIR=/usr/lib/petsc
+                    export PETSC_ARCH=`$PETSCARCH`
+                    AS_IF([test -d ${PETSC_DIR}],
+                          [
+                            AC_MSG_RESULT([using system-provided PETSC_DIR ${PETSC_DIR}])
+                            AC_MSG_RESULT([using system-provided PETSC_ARCH ${PETSC_ARCH}])
+                          ])
+                  ])
+          ])
 
     # Let's use a C compiler for the AC_CHECK_HEADER test, although this is
     # not strictly necessary...
     AC_LANG_PUSH(C)
-    AC_CHECK_HEADER($PETSC_DIR/include/petscversion.h,
-                    [enablepetsc=yes],
-                    [enablepetsc=no])
+    AC_CHECK_HEADER(${PETSC_DIR}/${PETSC_ARCH}/include/petscversion.h,
+                    [enablepetsc=yes
+                     petsc_version_h_file=${PETSC_DIR}/${PETSC_ARCH}/include/petscversion.h],
+                    [
+      AC_CHECK_HEADER(${PETSC_DIR}/include/petscversion.h,
+                      [enablepetsc=yes,
+                       petsc_version_h_file=${PETSC_DIR}/include/petscversion.h],
+                      [enablepetsc=no])
+                    ])
     AC_LANG_POP
 
     # Grab PETSc version and substitute into Makefile.
     # If version 2.x, also check that PETSC_ARCH is set
-    # This if-test used to be: if (test -r $PETSC_DIR/include/petsc.h) ; then
-    if (test "$enablepetsc" !=  no) ; then
-      # Some tricks to discover the version of petsc.
-      # You have to have grep and sed for this to work.
-      petscmajor=`grep "define PETSC_VERSION_MAJOR" $PETSC_DIR/include/petscversion.h | sed -e "s/#define PETSC_VERSION_MAJOR[ ]*//g"`
-      petscminor=`grep "define PETSC_VERSION_MINOR" $PETSC_DIR/include/petscversion.h | sed -e "s/#define PETSC_VERSION_MINOR[ ]*//g"`
-      petscsubminor=`grep "define PETSC_VERSION_SUBMINOR" $PETSC_DIR/include/petscversion.h | sed -e "s/#define PETSC_VERSION_SUBMINOR[ ]*//g"`
-      petscrelease=`grep "define PETSC_VERSION_RELEASE" $PETSC_DIR/include/petscversion.h | sed -e "s/#define PETSC_VERSION_RELEASE[ ]*//g"`
-      petscversion=$petscmajor.$petscminor.$petscsubminor
-      petscmajorminor=$petscmajor.$petscminor.x
+    AS_IF([test "$enablepetsc" !=  no],
+          [
+            dnl Some tricks to discover the version of petsc.
+            dnl You have to have grep and sed for this to work.
+            petscmajor=`grep "define PETSC_VERSION_MAJOR" $petsc_version_h_file | sed -e "s/#define PETSC_VERSION_MAJOR[ ]*//g"`
+            petscminor=`grep "define PETSC_VERSION_MINOR" $petsc_version_h_file | sed -e "s/#define PETSC_VERSION_MINOR[ ]*//g"`
+            petscsubminor=`grep "define PETSC_VERSION_SUBMINOR" $petsc_version_h_file | sed -e "s/#define PETSC_VERSION_SUBMINOR[ ]*//g"`
+            petscrelease=`grep "define PETSC_VERSION_RELEASE" $petsc_version_h_file | sed -e "s/#define PETSC_VERSION_RELEASE[ ]*//g"`
+            petscversion=$petscmajor.$petscminor.$petscsubminor
+            petscmajorminor=$petscmajor.$petscminor.x
 
-      if test $petscmajor = 2; then
-        if test "x$PETSC_ARCH" = x ; then
-          enablepetsc=no
-          AC_MSG_RESULT([<<< PETSc 2.x detected and "\$PETSC_ARCH" not set.  PETSc disabled. >>>])
-          # PETSc config failed.  We will try MPI at the end of this function.
-        fi
-      fi
+            AS_IF([test "$petscmajor" = "2" && test "x${PETSC_ARCH}" = "x"],
+                  [
+                    dnl PETSc config failed.  We will try MPI at the end of this function.
+                    enablepetsc=no
+                    AC_MSG_RESULT([<<< PETSc 2.x detected and "\$PETSC_ARCH" not set.  PETSc disabled. >>>])
+                  ])
 
       # We look for petscconf.h in both $PETSC_DIR/include and
       # $PETSC_DIR/$PETSC_ARCH/include, since it can appear in either.
@@ -106,7 +114,19 @@ AC_DEFUN([CONFIGURE_PETSC],
     fi
 
     # If we haven't been disabled yet, carry on!
-    if (test $enablepetsc != no) ; then
+    AS_IF([test $enablepetsc != no],
+          [
+        dnl Check for snoopable MPI
+        AS_IF([test -r ${PETSC_DIR}/bmake/${PETSC_ARCH}/petscconf], dnl 2.3.x
+              [PETSC_MPI=`grep MPIEXEC ${PETSC_DIR}/bmake/${PETSC_ARCH}/petscconf | grep -v mpiexec.uni`],
+              [test -r ${PETSC_DIR}/${PETSC_ARCH}/conf/petscvariables], dnl 3.0.x
+              [PETSC_MPI=`grep MPIEXEC ${PETSC_DIR}/${PETSC_ARCH}/conf/petscvariables | grep -v mpiexec.uni`],
+              [test -r ${PETSC_DIR}/conf/petscvariables], dnl 3.0.x
+              [PETSC_MPI=`grep MPIEXEC ${PETSC_DIR}/conf/petscvariables | grep -v mpiexec.uni`],
+              [test -r ${PETSC_DIR}/${PETSC_ARCH}/lib/petsc/conf/petscvariables], dnl 3.6.x
+              [PETSC_MPI=`grep MPIEXEC ${PETSC_DIR}/${PETSC_ARCH}/lib/petsc/conf/petscvariables | grep -v mpiexec.uni`],
+              [test -r ${PETSC_DIR}/lib/petsc/conf/petscvariables], dnl 3.6.x
+              [PETSC_MPI=`grep MPIEXEC ${PETSC_DIR}/lib/petsc/conf/petscvariables | grep -v mpiexec.uni`])
 
         # Check for snoopable MPI
         if (test -r $PETSC_DIR/bmake/$PETSC_ARCH/petscconf) ; then           # 2.3.x
@@ -133,7 +153,7 @@ AC_DEFUN([CONFIGURE_PETSC],
         fi
 
         # Print informative message about the version of PETSc we detected
-        AC_MSG_RESULT([<<< Found PETSc $petscversion installation in $PETSC_DIR ... >>>])
+        AC_MSG_RESULT([<<< Found PETSc $petscversion installation in ${PETSC_DIR} ... >>>])
 
         # Figure out whether this PETSC_DIR is a PETSc source tree or an installed PETSc.
         if (test -r ${PETSC_DIR}/makefile -a -r ${PETSC_DIR}/${PETSC_ARCH}/conf/variables); then # pre-3.6.0 non-installed PETSc
@@ -174,8 +194,15 @@ AC_DEFUN([CONFIGURE_PETSC],
             printf '%s\n' "getPETSC_CC_INCLUDES:" >> Makefile_config_petsc
             printf '\t%s\n' "echo \$(PETSC_CC_INCLUDES)" >> Makefile_config_petsc
 
-            printf '%s\n' "getPETSC_FC_INCLUDES:" >> Makefile_config_petsc
-            printf '\t%s\n' "echo \$(PETSC_FC_INCLUDES)" >> Makefile_config_petsc
+              dnl Ubuntu PETSc dpkg
+              [test -r ${PETSC_DIR}/${PETSC_ARCH}/lib/petsc/conf/variables],
+              [PREFIX_INSTALLED_PETSC=yes
+               PETSC_VARS_FILE=${PETSC_DIR}/${PETSC_ARCH}/lib/petsc/conf/variables],
+
+              dnl Support having a non-prefix-installed PETSc with an
+              dnl *incorrectly* set PETSC_ARCH environment variable.  This is
+              dnl a less desirable configuration, but we need to support it
+              dnl for backwards compatibility.
 
             PETSC_CC_INCLUDES=`make -s -f Makefile_config_petsc getPETSC_CC_INCLUDES`
             PETSC_FC_INCLUDES=`make -s -f Makefile_config_petsc getPETSC_FC_INCLUDES`
@@ -189,8 +216,41 @@ AC_DEFUN([CONFIGURE_PETSC],
             printf '%s\n'  "getPETSC_CC_INCLUDES:" >> Makefile_config_petsc
             printf '\t%s\n' "echo \$(PETSC_CC_INCLUDES)" >> Makefile_config_petsc
 
-            printf '%s\n' "getPETSC_FC_INCLUDES:" >> Makefile_config_petsc
-            printf '\t%s\n' "echo \$(PETSC_FC_INCLUDES)" >> Makefile_config_petsc
+        dnl Set some include and link variables by building and running temporary Makefiles.
+        AS_IF([test "$enablepetsc" != "no" && test "$PREFIX_INSTALLED_PETSC" = "no"],
+              [
+                PETSCLINKLIBS=`make -s -C ${PETSC_DIR} getlinklibs`
+                PETSCINCLUDEDIRS=`make -s -C ${PETSC_DIR} getincludedirs`
+                printf '%s\n' "include $PETSC_VARS_FILE" > Makefile_config_petsc
+                printf '%s\n' "getPETSC_CC_INCLUDES:" >> Makefile_config_petsc
+                printf '\t%s\n' "echo \$(PETSC_CC_INCLUDES)" >> Makefile_config_petsc
+                printf '%s\n' "getPETSC_FC_INCLUDES:" >> Makefile_config_petsc
+                printf '\t%s\n' "echo \$(PETSC_FC_INCLUDES)" >> Makefile_config_petsc
+                PETSC_CC_INCLUDES=`make -s -f Makefile_config_petsc getPETSC_CC_INCLUDES`
+                PETSC_FC_INCLUDES=`make -s -f Makefile_config_petsc getPETSC_FC_INCLUDES`
+                rm -f Makefile_config_petsc
+              ],
+              [
+                printf '%s\n' "include $PETSC_VARS_FILE" > Makefile_config_petsc
+                printf '%s\n' "getincludedirs:" >> Makefile_config_petsc
+                printf '\t%s' "echo " >> Makefile_config_petsc
+                AS_IF([test -d ${PETSC_DIR}/include],
+                      [printf '%s ' "-I\$(PETSC_DIR)/include" >> Makefile_config_petsc])
+                AS_IF([test -d ${PETSC_DIR}/${PETSC_ARCH}/include],
+                      [printf '%s ' "-I\$(PETSC_DIR)/\$(PETSC_ARCH)/include" >> Makefile_config_petsc])
+                printf '%s\n' "\$(BLOCKSOLVE_INCLUDE) \$(HYPRE_INCLUDE) \$(PACKAGES_INCLUDES)" >> Makefile_config_petsc
+                printf '%s\n'  "getPETSC_CC_INCLUDES:" >> Makefile_config_petsc
+                printf '\t%s\n' "echo \$(PETSC_CC_INCLUDES)" >> Makefile_config_petsc
+                printf '%s\n' "getPETSC_FC_INCLUDES:" >> Makefile_config_petsc
+                printf '\t%s\n' "echo \$(PETSC_FC_INCLUDES)" >> Makefile_config_petsc
+                printf '%s\n' "getlinklibs:" >> Makefile_config_petsc
+                printf '\t%s\n' "echo \$(PETSC_SNES_LIB)" >> Makefile_config_petsc
+                PETSCLINKLIBS=`make -s -f Makefile_config_petsc getlinklibs`
+                PETSCINCLUDEDIRS=`make -s -f Makefile_config_petsc getincludedirs`
+                PETSC_CC_INCLUDES=`make -s -f Makefile_config_petsc getPETSC_CC_INCLUDES`
+                PETSC_FC_INCLUDES=`make -s -f Makefile_config_petsc getPETSC_FC_INCLUDES`
+                rm -f Makefile_config_petsc
+              ])
 
             printf '%s\n' "getlinklibs:" >> Makefile_config_petsc
             printf '\t%s\n' "echo \$(PETSC_SNES_LIB)" >> Makefile_config_petsc
